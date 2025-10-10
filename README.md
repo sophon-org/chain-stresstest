@@ -13,11 +13,12 @@ Comprehensive stress testing tools for the Sophon EVM L2 testnet. This project i
 ## 📋 Table of Contents
 
 1. [Quick Start](#quick-start)
-2. [Stress Test Types](#stress-test-types)
-3. [Factory Chain Contracts](#factory-chain-contracts)
-4. [Usage Guide](#usage-guide)
-5. [Results and Metrics](#results-and-metrics)
-6. [Troubleshooting](#troubleshooting)
+2. [Compilation Options](#compilation-options)
+3. [Stress Test Types](#stress-test-types)
+4. [Factory Chain Contracts](#factory-chain-contracts)
+5. [Usage Guide](#usage-guide)
+6. [Results and Metrics](#results-and-metrics)
+7. [Troubleshooting](#troubleshooting)
 
 ## 🚀 Quick Start
 
@@ -27,11 +28,14 @@ Comprehensive stress testing tools for the Sophon EVM L2 testnet. This project i
 # Install dependencies
 bun install
 
-# Set your private key (account needs SOPH testnet tokens)
-export PRIVATE_KEY="0x..."
+# Edit .env file with your private key (account needs SOPH testnet tokens)
+nano .env
 
-# Compile contracts
-bun run hardhat compile
+# Compile contracts (default)
+bunx hardhat compile
+
+# For 100-factory chain: compile with solx
+HARDHAT_PROFILE=solx bunx hardhat compile
 ```
 
 ### Run Your First Test
@@ -43,9 +47,71 @@ bun run scripts/rapid-deployment-stress-test.ts transfer
 # Or deploy Counter contracts
 bun run scripts/rapid-deployment-stress-test.ts counter
 
-# Or go big with 100-Factory Chain deployments
+# Or go big with 100-Factory Chain deployments (requires solx compilation)
 bun run scripts/rapid-deployment-stress-test.ts factory100
 ```
+
+## 🔧 Compilation Options
+
+This project supports two compilation modes:
+
+### Default: Standard Solc with `--via-ir`
+
+The default profile uses the standard Solidity compiler with optimization and the intermediate representation (IR) pipeline:
+
+```bash
+# Compile with standard solc + --via-ir (default)
+bunx hardhat compile
+```
+
+**Features:**
+- ✅ Full EVM compatibility
+- ✅ Optimized bytecode via IR pipeline
+- ✅ Works for 10-factory chain and Counter contracts
+- ⚠️ **Cannot compile 100-factory chain** (initcode size exceeds limits)
+- ✅ Standard deployment to any EVM chain
+
+**Configuration:**
+```typescript
+{
+  optimizer: { enabled: true, runs: 200 },
+  viaIR: true
+}
+```
+
+**Use this for:**
+- Transfer tests
+- Counter deployments
+- 10-factory chain
+
+### Alternative: solx Compiler
+
+The `solx` profile uses the [solx](https://solx.zksync.io/) compiler for maximum gas optimization on normal EVM chains:
+
+```bash
+# Compile with solx
+HARDHAT_PROFILE=solx bunx hardhat compile
+```
+
+**Features:**
+- ⚡ More gas-efficient bytecode for EVM
+- 🔧 Advanced optimization techniques
+- ✅ Full EVM compatibility
+- ✅ **Required for 100-factory chain** (produces smaller initcode)
+
+**Use this for:**
+- 100-factory chain deployments (required)
+- Any test where you want maximum gas efficiency
+
+**Requirements:**
+```bash
+# Install solx (example for Linux)
+wget https://github.com/matter-labs/era-solidity/releases/download/v0.1.2/solx-linux-amd64-gnu-v0.1.2
+chmod +x solx-linux-amd64-gnu-v0.1.2
+mv solx-linux-amd64-gnu-v0.1.2 ~/
+```
+
+> **Important:** The 100-factory chain **requires** solx compilation. Standard solc produces initcode that exceeds deployment size limits (>49KB).
 
 ## 🧪 Stress Test Types
 
@@ -88,23 +154,21 @@ bun run scripts/rapid-deployment-stress-test.ts factory100
 
 #### Configuration
 
-Edit these constants in the script:
+Edit this constant in the script to adjust test size:
 
 ```typescript
 const TOTAL_DEPLOYMENTS = 1000;  // Total transactions to send
-const BATCH_SIZE = 50;           // Transactions per batch
-const BATCH_DELAY_MS = 10;       // Delay between batches (ms)
 ```
 
 #### Features
 
 - ✅ **Manual Nonce Management** - No waiting for confirmations
-- ✅ **Concurrent Submissions** - Sends transactions as fast as possible
-- ✅ **Batching Control** - Prevents RPC overload
+- ✅ **Maximum Speed** - All transactions sent concurrently (no batching, no delays)
 - ✅ **Failure Tracking** - Monitors submission and confirmation failures
 - ✅ **Inclusion Time Metrics** - Tracks time from submission to confirmation
 - ✅ **Detailed Error Logging** - Full RPC error response for debugging
 - ✅ **JSON Report Export** - Saves comprehensive results
+- 🔥 **True Stress Testing** - Pushes RPC to its absolute limits
 
 ### 2. Single Factory Chain Deployment
 
@@ -149,8 +213,10 @@ bun run hardhat run scripts/deploy-factory-chain-100.ts --network sophon
 - **File**: `contracts/FactoryChain100.sol`
 - **Contracts**: Factory1 → Factory2 → ... → Factory100
 - **Generation**: Programmatically generated via `scripts/generate-factory100.ts`
-- **Compilation**: Requires `viaIR: true` optimizer setting
+- **Compilation**: ⚠️ **Requires solx compiler** (standard solc produces initcode too large)
 - **Gas Usage**: ~15-20M gas per deployment
+
+> **Important**: The 100-factory chain must be compiled with solx for gas-efficient bytecode that fits within deployment limits.
 
 ## 📖 Usage Guide
 
@@ -162,12 +228,20 @@ bun run hardhat run scripts/deploy-factory-chain-100.ts --network sophon
 
 2. **Configure Environment**
    ```bash
-   export PRIVATE_KEY="0xYOUR_PRIVATE_KEY"
+   # Edit .env file with your private key
+   nano .env
    ```
 
 3. **Compile Contracts**
+   
+   For transfer and counter tests:
    ```bash
-   bun run hardhat compile
+   bunx hardhat compile
+   ```
+   
+   For factory100 tests (requires solx):
+   ```bash
+   HARDHAT_PROFILE=solx bunx hardhat compile
    ```
 
 ### Running Tests
@@ -175,24 +249,26 @@ bun run hardhat run scripts/deploy-factory-chain-100.ts --network sophon
 #### Rapid Stress Test Examples
 
 ```bash
-# Quick test: 100 transfers
-# Edit TOTAL_DEPLOYMENTS to 100 in the script
+# Quick test: 100 transfers (edit TOTAL_DEPLOYMENTS = 100 in script)
 bun run scripts/rapid-deployment-stress-test.ts transfer
 
-# Medium test: 1000 Counter deployments
+# Medium test: 1000 Counter deployments (default)
 bun run scripts/rapid-deployment-stress-test.ts counter
 
-# Maximum stress: 1000 x 100-Factory Chains = 100,000 contracts!
+# MAXIMUM STRESS: 1000 x 100-Factory Chains = 100,000 contracts!
+# ⚠️ Requires solx compilation first: HARDHAT_PROFILE=solx bunx hardhat compile
+# All sent as fast as possible with no delays
 bun run scripts/rapid-deployment-stress-test.ts factory100
 ```
 
 #### Single Chain Deployments
 
 ```bash
-# 10-Factory Chain
+# 10-Factory Chain (works with default compiler)
 bun run hardhat run scripts/deploy-factory-chain.ts --network sophon
 
-# 100-Factory Chain  
+# 100-Factory Chain (requires solx compilation first)
+HARDHAT_PROFILE=solx bunx hardhat compile
 bun run hardhat run scripts/deploy-factory-chain-100.ts --network sophon
 ```
 
@@ -362,12 +438,16 @@ bun run scripts/rapid-deployment-stress-test.ts counter
 ### Strategy 3: Gas Limit Stress Test
 ```bash
 # Deploy 100-factory chains to max out gas per block
+# Compile with solx first:
+HARDHAT_PROFILE=solx bunx hardhat compile
 bun run scripts/rapid-deployment-stress-test.ts factory100
 ```
 
 ### Strategy 4: Single Transaction Complexity
 ```bash
 # Single massive transaction
+# Compile with solx first:
+HARDHAT_PROFILE=solx bunx hardhat compile
 bun run hardhat run scripts/deploy-factory-chain-100.ts --network sophon
 ```
 

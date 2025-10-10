@@ -1,3 +1,4 @@
+import "dotenv/config";
 import hardhatToolboxViemPlugin from "@nomicfoundation/hardhat-toolbox-viem";
 import { configVariable } from "hardhat/config";
 import { defineChain } from "viem";
@@ -37,6 +38,17 @@ const config = {
         version: "0.8.28",
         path: join(homedir(), "solx-linux-amd64-gnu-v0.1.2"),
       },
+      solc: {
+        version: "0.8.28",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          viaIR: true,
+        },
+      },
+      
     },
   },
   networks: {
