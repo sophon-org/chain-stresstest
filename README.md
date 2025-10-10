@@ -2,13 +2,6 @@
 
 Comprehensive stress testing tools for the Sophon EVM L2 testnet. This project includes multiple strategies for testing network performance, gas limits, and transaction throughput.
 
-## 🌐 Network Details
-
-- **Network**: Sophon Testnet (Fully EVM Compatible L2)
-- **RPC URL**: https://zksync-os-testnet-sophon.zksync.dev
-- **Chain ID**: 531050204
-- **Block Explorer**: https://block-explorer.zksync-os-testnet-sophon.zksync.dev/
-- **Native Currency**: SOPH (18 decimals)
 
 ## 📋 Table of Contents
 
@@ -60,7 +53,7 @@ This project supports two compilation modes:
 The default profile uses the standard Solidity compiler with optimization and the intermediate representation (IR) pipeline:
 
 ```bash
-# Compile with standard solc + --via-ir (default)
+# Compile with solx (default)
 bunx hardhat compile
 ```
 
@@ -68,7 +61,6 @@ bunx hardhat compile
 - ✅ Full EVM compatibility
 - ✅ Optimized bytecode via IR pipeline
 - ✅ Works for 10-factory chain and Counter contracts
-- ⚠️ **Cannot compile 100-factory chain** (initcode size exceeds limits)
 - ✅ Standard deployment to any EVM chain
 
 **Configuration:**
@@ -84,14 +76,7 @@ bunx hardhat compile
 - Counter deployments
 - 10-factory chain
 
-### Alternative: solx Compiler
 
-The `solx` profile uses the [solx](https://solx.zksync.io/) compiler for maximum gas optimization on normal EVM chains:
-
-```bash
-# Compile with solx
-HARDHAT_PROFILE=solx bunx hardhat compile
-```
 
 **Features:**
 - ⚡ More gas-efficient bytecode for EVM
@@ -326,24 +311,14 @@ Contains:
 - Full configuration
 - All transaction hashes
 - Individual inclusion times
-- Gas usage per transaction
-- Block numbers
-- Error messages
+- Gas usage per transaction### Alternative: solx Compiler
 
-## 🔧 Customization
+The `solx` profile uses the [solx](https://solx.zksync.io/) compiler for maximum gas optimization on normal EVM chains:
 
-### Modify Test Parameters
-
-Edit `scripts/rapid-deployment-stress-test.ts`:
-
-```typescript
-// Test size
-const TOTAL_DEPLOYMENTS = 1000;  // Increase for longer tests
-
-// RPC settings (in client creation)
-transport: http(undefined, {
-  retryCount: 5,      // Number of retries on failure
-  retryDelay: 1000,   // Delay between retries (ms)
+```bash
+# Compile with solx
+HARDHAT_PROFILE=solx bunx hardhat compile
+```
   timeout: 30_000,    // Request timeout (ms)
 })
 ```
