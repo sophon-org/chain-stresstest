@@ -66,11 +66,12 @@ const config = {
       url: configVariable("SEPOLIA_RPC_URL"),
       accounts: [configVariable("SEPOLIA_PRIVATE_KEY")],
     },
-    sophon: {
+    sophonTestnet: {
       type: "http",
       url: "https://zksync-os-testnet-sophon.zksync.dev",
       chainId: 531050204,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chain: sophonTestnet,
     },
   },
 };

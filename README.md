@@ -6,12 +6,13 @@ Comprehensive stress testing tools for the Sophon EVM L2 testnet. This project i
 ## 📋 Table of Contents
 
 1. [Quick Start](#quick-start)
-2. [Compilation Options](#compilation-options)
-3. [Stress Test Types](#stress-test-types)
-4. [Factory Chain Contracts](#factory-chain-contracts)
-5. [Usage Guide](#usage-guide)
-6. [Results and Metrics](#results-and-metrics)
-7. [Troubleshooting](#troubleshooting)
+2. [RPC Endpoint Testing](#rpc-endpoint-testing)
+3. [Compilation Options](#compilation-options)
+4. [Stress Test Types](#stress-test-types)
+5. [Factory Chain Contracts](#factory-chain-contracts)
+6. [Usage Guide](#usage-guide)
+7. [Results and Metrics](#results-and-metrics)
+8. [Troubleshooting](#troubleshooting)
 
 ## 🚀 Quick Start
 
@@ -42,6 +43,101 @@ bun run scripts/rapid-deployment-stress-test.ts counter
 
 # Or go big with 100-Factory Chain deployments (requires solx compilation)
 bun run scripts/rapid-deployment-stress-test.ts factory100
+```
+
+## 🔍 RPC Endpoint Testing
+
+### Test RPC Endpoint Support
+
+The project includes a comprehensive RPC endpoint test suite that validates which JSON-RPC methods are supported by the Sophon Testnet.
+
+**File**: `test/RpcEndpoints.ts`
+
+**Quick Start:**
+```bash
+# Requires PRIVATE_KEY in .env file
+# sophonTestnet is now the default network for this test
+npx hardhat test test/RpcEndpoints.ts --network sophonTestnet
+```
+
+#### What It Tests
+
+Tests all essential Ethereum JSON-RPC endpoints:
+
+**✅ Core Methods:**
+- `eth_blockNumber` - Get current block number
+- `eth_getBlockByNumber` - Fetch block data
+- `eth_getBlockReceipts` - Get all receipts for a block
+- `eth_getTransactionByHash` - Get transaction details
+- `eth_getTransactionReceipt` - Get transaction receipt
+- `eth_sendRawTransaction` - Send signed transactions
+- `eth_getTransactionCount` - Get account nonce
+- `eth_getBalance` - Get account balance
+- `eth_estimateGas` - Estimate transaction gas
+- `eth_gasPrice` - Get current gas price
+- `eth_getLogs` - Query event logs
+- `web3_clientVersion` - Get client info
+
+**🔄 Alternative Methods (Parity):**
+- `parity_pendingTransactions` vs `eth_getBlockByNumber('pending')`
+- `parity_getBlockReceipts` vs `eth_getBlockReceipts`
+- `parity_nextNonce` vs `eth_getTransactionCount`
+
+**🐛 Debug/Trace Methods:**
+- `debug_traceBlockByNumber` / `trace_block`
+- `debug_traceTransaction` / `trace_transaction`
+
+#### Running the Tests
+
+##### On Sophon Testnet (Default)
+```bash
+# Test against live Sophon testnet (default network for this test)
+# Requires PRIVATE_KEY in .env file
+npx hardhat test test/RpcEndpoints.ts --network sophonTestnet
+
+# Uses real on-chain data:
+# - Address: 0x44Cdb1e839A2c0D1E0d4f491a8CB14599D253281
+# - Example TX: 0x9ce2ce2beac5d2197b596cb50964f14ca2d174facdc7c614dd1ce4972b1e240c
+
+# Expected output:
+# - 13 passing (all standard RPC methods)
+# - 2 failing (debug/trace methods not supported - expected)
+```
+
+##### On Local Hardhat Network
+
+> **⚠️ Known Limitation:** Local Hardhat testing has serialization issues with Node's test runner and custom viem clients. This test suite is specifically designed to validate the Sophon Testnet RPC endpoints. Please use the Sophon Testnet for accurate results.
+
+```bash
+# Not recommended - use Sophon testnet instead
+npx hardhat test test/RpcEndpoints.ts
+```
+
+#### Test Results for Sophon Testnet
+
+**✅ Supported (13/15 core endpoints):**
+- All standard Ethereum RPC methods work
+- `eth_getBlockReceipts` is supported (modern standard)
+- Client: `zksync-os/v0.8.3`
+
+**❌ Not Supported:**
+- Parity-specific methods (`parity_*`)
+- Debug/trace methods (not enabled)
+
+#### Understanding the Output
+
+The test provides clear indicators:
+- `✓` - Method is supported and working
+- `✗` - Method is not supported or returned error
+- `⚠` - Alternative methods tested, none supported
+
+Example output:
+```
+✓ eth_blockNumber: 13076
+✓ eth_getBalance: 9049.999823721135087 ETH
+✓ web3_clientVersion: zksync-os/v0.8.3
+✗ debug_traceBlockByNumber not supported: default struct log tracer is not supported
+⚠ Neither debug_traceBlockByNumber nor trace_block is supported
 ```
 
 ## 🔧 Compilation Options
@@ -391,6 +487,9 @@ HH-SophonV2-Test/
 │   ├── deploy-factory-chain-100.ts       # Deploy 100-chain
 │   ├── view-events.ts                    # Decode events
 │   ├── generate-factory100.ts            # Generate 100-chain
+├── test/
+│   ├── Counter.ts               # Basic Hardhat tests
+│   ├── RpcEndpoints.ts          # RPC endpoint validation ⭐
 ├── hardhat.config.ts            # Network configuration
 ├── package.json                 # Dependencies
 └── README.md                    # This file
