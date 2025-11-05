@@ -36,13 +36,17 @@ HARDHAT_PROFILE=solx bunx hardhat compile
 
 ```bash
 # Start with simple transfers (cheapest, fastest)
+# Default: 1000 transactions
 bun run scripts/rapid-deployment-stress-test.ts transfer
+
+# Or specify a custom amount (e.g., 500 transactions)
+bun run scripts/rapid-deployment-stress-test.ts transfer 500
 
 # Or deploy Counter contracts
 bun run scripts/rapid-deployment-stress-test.ts counter
 
 # Or go big with 100-Factory Chain deployments (requires solx compilation)
-bun run scripts/rapid-deployment-stress-test.ts factory100
+bun run scripts/rapid-deployment-stress-test.ts factory100 100
 ```
 
 ## 🔍 RPC Endpoint Testing
@@ -211,7 +215,11 @@ The most flexible stress test with three transaction modes:
 - Fastest execution
 
 ```bash
+# Default: 1000 transactions
 bun run scripts/rapid-deployment-stress-test.ts transfer
+
+# Custom amount: 500 transactions
+bun run scripts/rapid-deployment-stress-test.ts transfer 500
 ```
 
 ##### `counter`
@@ -220,7 +228,11 @@ bun run scripts/rapid-deployment-stress-test.ts transfer
 - Tests basic contract deployment
 
 ```bash
+# Default: 1000 deployments
 bun run scripts/rapid-deployment-stress-test.ts counter
+
+# Custom amount: 250 deployments
+bun run scripts/rapid-deployment-stress-test.ts counter 250
 ```
 
 ##### `factory100`
@@ -230,25 +242,44 @@ bun run scripts/rapid-deployment-stress-test.ts counter
 - Each transaction creates 100 nested contracts
 
 ```bash
+# Default: 1000 chains = 100,000 contracts
 bun run scripts/rapid-deployment-stress-test.ts factory100
+
+# Custom amount: 100 chains = 10,000 contracts
+bun run scripts/rapid-deployment-stress-test.ts factory100 100
 ```
 
 #### Configuration
 
-Edit this constant in the script to adjust test size:
+**Command Line Arguments:**
 
-```typescript
-const TOTAL_DEPLOYMENTS = 1000;  // Total transactions to send
+```bash
+bun run scripts/rapid-deployment-stress-test.ts [type] [count]
+```
+
+- `type`: Transaction type - `transfer`, `counter`, or `factory100` (default: `transfer`)
+- `count`: Number of transactions to send (default: `1000`)
+
+**Examples:**
+```bash
+# 500 transfers
+bun run scripts/rapid-deployment-stress-test.ts transfer 500
+
+# 100 counter deployments  
+bun run scripts/rapid-deployment-stress-test.ts counter 100
+
+# 50 factory100 chains (5,000 total contracts)
+bun run scripts/rapid-deployment-stress-test.ts factory100 50
 ```
 
 #### Features
 
 - ✅ **Manual Nonce Management** - No waiting for confirmations
 - ✅ **Maximum Speed** - All transactions sent concurrently (no batching, no delays)
+- ✅ **Configurable Transaction Count** - Specify any number of transactions via command line
 - ✅ **Failure Tracking** - Monitors submission and confirmation failures
 - ✅ **Inclusion Time Metrics** - Tracks time from submission to confirmation
 - ✅ **Detailed Error Logging** - Full RPC error response for debugging
-- ✅ **JSON Report Export** - Saves comprehensive results
 - 🔥 **True Stress Testing** - Pushes RPC to its absolute limits
 
 ### 2. Single Factory Chain Deployment
@@ -330,16 +361,22 @@ bun run hardhat run scripts/deploy-factory-chain-100.ts --network sophon
 #### Rapid Stress Test Examples
 
 ```bash
-# Quick test: 100 transfers (edit TOTAL_DEPLOYMENTS = 100 in script)
-bun run scripts/rapid-deployment-stress-test.ts transfer
+# Quick test: 100 transfers
+bun run scripts/rapid-deployment-stress-test.ts transfer 100
 
 # Medium test: 1000 Counter deployments (default)
 bun run scripts/rapid-deployment-stress-test.ts counter
 
+# Large test: 5000 transfers
+bun run scripts/rapid-deployment-stress-test.ts transfer 5000
+
 # MAXIMUM STRESS: 1000 x 100-Factory Chains = 100,000 contracts!
 # ⚠️ Requires solx compilation first: HARDHAT_PROFILE=solx bunx hardhat compile
 # All sent as fast as possible with no delays
-bun run scripts/rapid-deployment-stress-test.ts factory100
+bun run scripts/rapid-deployment-stress-test.ts factory100 1000
+
+# Smaller factory100 test: 50 chains = 5,000 contracts
+bun run scripts/rapid-deployment-stress-test.ts factory100 50
 ```
 
 #### Single Chain Deployments
@@ -395,19 +432,7 @@ The rapid deployment stress test provides comprehensive metrics:
 - **Block Count**: Number of unique blocks containing transactions
 - **TXs per Block**: How many transactions were included per block
 
-### JSON Report
-
-Each test run generates a detailed JSON report:
-
-```
-stress-test-report-[timestamp].json
-```
-
-Contains:
-- Full configuration
-- All transaction hashes
-- Individual inclusion times
-- Gas usage per transaction### Alternative: solx Compiler
+### Alternative: solx Compiler
 
 The `solx` profile uses the [solx](https://solx.zksync.io/) compiler for maximum gas optimization on normal EVM chains:
 
@@ -500,13 +525,16 @@ HH-SophonV2-Test/
 ### Strategy 1: RPC Throughput Test
 ```bash
 # Use transfers to test pure RPC throughput
-bun run scripts/rapid-deployment-stress-test.ts transfer
+# Start small and scale up
+bun run scripts/rapid-deployment-stress-test.ts transfer 100
+bun run scripts/rapid-deployment-stress-test.ts transfer 1000
+bun run scripts/rapid-deployment-stress-test.ts transfer 5000
 ```
 
 ### Strategy 2: Contract Deployment Stress
 ```bash
 # Test contract creation load
-bun run scripts/rapid-deployment-stress-test.ts counter
+bun run scripts/rapid-deployment-stress-test.ts counter 500
 ```
 
 ### Strategy 3: Gas Limit Stress Test
@@ -514,7 +542,7 @@ bun run scripts/rapid-deployment-stress-test.ts counter
 # Deploy 100-factory chains to max out gas per block
 # Compile with solx first:
 HARDHAT_PROFILE=solx bunx hardhat compile
-bun run scripts/rapid-deployment-stress-test.ts factory100
+bun run scripts/rapid-deployment-stress-test.ts factory100 100
 ```
 
 ### Strategy 4: Single Transaction Complexity

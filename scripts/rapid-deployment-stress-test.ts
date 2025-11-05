@@ -7,7 +7,7 @@ import {
   parseEther,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync } from "fs";
 import { join } from "path";
 
 console.log("🚀 RAPID STRESS TEST");
@@ -20,17 +20,26 @@ if (!process.env.PRIVATE_KEY) {
 
 // Parse command line arguments
 const TX_TYPE = process.argv[2] || "transfer";
+const TOTAL_DEPLOYMENTS = process.argv[3] ? parseInt(process.argv[3]) : 1000;
 
 if (!["transfer", "counter", "factory100"].includes(TX_TYPE)) {
   console.error("❌ Invalid transaction type. Must be one of:");
   console.error("   - transfer    : 0.1 SOPH transfer to self (default)");
   console.error("   - counter     : Deploy Counter contract");
   console.error("   - factory100  : Deploy 100-Factory Chain");
+  console.error("");
+  console.error("Usage: bun run scripts/rapid-deployment-stress-test.ts [type] [count]");
+  console.error("   type  : transaction type (default: transfer)");
+  console.error("   count : number of transactions (default: 1000)");
+  console.error("");
+  console.error("Example: bun run scripts/rapid-deployment-stress-test.ts transfer 500");
   process.exit(1);
 }
 
-// Configuration
-const TOTAL_DEPLOYMENTS = 1000;
+if (Number.isNaN(TOTAL_DEPLOYMENTS) || TOTAL_DEPLOYMENTS < 1) {
+  console.error("❌ Invalid transaction count. Must be a positive number.");
+  process.exit(1);
+}
 
 // Define Sophon testnet
 const sophonTestnet = defineChain({
@@ -105,7 +114,6 @@ async function main() {
     console.log(`   Total Contracts: ${TOTAL_DEPLOYMENTS * 100} contracts`);
   }
   
-  console.log(`   Mode: MAXIMUM SPEED - No batching, no delays`);
   console.log(`   Account: ${account.address}`);
 
   // Check RPC availability
@@ -130,11 +138,13 @@ async function main() {
   console.log(`   Starting Balance: ${formatEther(balance)} SOPH`);
   console.log(`   Starting Nonce: ${nonce}`);
 
+  const overallStartTime = Date.now();
+  const startDateTime = new Date(overallStartTime);
+
   console.log("\n" + "=".repeat(70));
   console.log(`🔥 STARTING RAPID ${TX_TYPE.toUpperCase()}...`);
   console.log("=".repeat(70));
-
-  const overallStartTime = Date.now();
+  console.log(`   Start Time: ${startDateTime.toLocaleString()}`);
   const submissionPromises: Promise<void>[] = [];
 
   // Send ALL transactions concurrently - MAXIMUM SPEED
@@ -349,71 +359,13 @@ async function main() {
     `   Average TXs per block: ${(successfulTxs.length / blocks.size).toFixed(2)}`
   );
 
-  // Save detailed results
-  const reportPath = join(
-    process.cwd(),
-    `stress-test-report-${Date.now()}.json`
-  );
-  writeFileSync(
-    reportPath,
-    JSON.stringify(
-      {
-        config: {
-          txType: TX_TYPE,
-          totalTransactions: TOTAL_DEPLOYMENTS,
-          mode: "MAXIMUM_SPEED",
-          batching: false,
-          ...(TX_TYPE === "factory100" && {
-            contractsPerTx: 100,
-            totalContracts: TOTAL_DEPLOYMENTS * 100,
-          }),
-          network: "Sophon Testnet",
-          chainId: 531050204,
-        },
-        summary: {
-          totalDuration,
-          submissionDuration,
-          totalAttempted: TOTAL_DEPLOYMENTS,
-          submitted: successfulSubmissions.length,
-          confirmed,
-          successful: successfulTxs.length,
-          reverted: revertedTxs.length,
-          failed: failed + failedSubmissions.length,
-          successRate: parseFloat(successRate),
-        },
-        timing: {
-          avgInclusionTime,
-          medianInclusionTime,
-          minInclusionTime,
-          maxInclusionTime,
-        },
-        gas: {
-          total: totalGasUsed.toString(),
-          average:
-            successfulTxs.length > 0
-              ? (totalGasUsed / BigInt(successfulTxs.length)).toString()
-              : "0",
-        },
-        blocks: {
-          count: blocks.size,
-          avgTxsPerBlock: successfulTxs.length / blocks.size,
-        },
-        transactions: results.map((r) => ({
-          ...r,
-          gasUsed: r.gasUsed?.toString(),
-          blockNumber: r.blockNumber?.toString(),
-        })),
-      },
-      null,
-      2
-    )
-  );
-
-  console.log(`\n💾 Detailed report saved: ${reportPath}`);
+  const endDateTime = new Date(overallEndTime);
 
   console.log("\n" + "=".repeat(70));
   console.log("🎉 STRESS TEST COMPLETED!");
   console.log("=".repeat(70));
+  console.log(`   Start Time: ${startDateTime.toLocaleString()}`);
+  console.log(`   End Time:   ${endDateTime.toLocaleString()}`);
 }
 
 main().catch((error) => {
