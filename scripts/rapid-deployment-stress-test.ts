@@ -190,30 +190,13 @@ async function main() {
           );
         }
       } catch (error: any) {
-        const errorInfo = {
-          message: error.message,
-          shortMessage: error.shortMessage,
-          details: error.details,
-          cause: error.cause,
-          data: error.data,
-          code: error.code,
-          version: error.version,
-        };
-        
         results.push({
           index: txIndex,
           hash: "FAILED",
           nonce: txNonce,
           submittedAt: Date.now(),
-          error: JSON.stringify(errorInfo),
+          error: error.message || "Unknown error",
         });
-        
-        // Print first error in full detail
-        if (results.filter(r => r.hash === "FAILED").length === 1) {
-          console.log(`\n❌ FIRST ERROR (TX #${txIndex}, nonce ${txNonce}):`);
-          console.log(JSON.stringify(errorInfo, null, 2));
-          console.log();
-        }
       }
     })();
 
@@ -239,18 +222,6 @@ async function main() {
 
   console.log(`   Submitted Successfully: ${successfulSubmissions.length}`);
   console.log(`   Failed to Submit: ${failedSubmissions.length}`);
-
-  if (failedSubmissions.length > 0) {
-    console.log(`\n⚠️  Submission Failures Summary:`);
-    console.log(`   Total Failed: ${failedSubmissions.length}`);
-    console.log(`\n   Sample Error (TX #${failedSubmissions[0].index}):`);
-    try {
-      const parsedError = JSON.parse(failedSubmissions[0].error || "{}");
-      console.log(JSON.stringify(parsedError, null, 2));
-    } catch {
-      console.log(`   ${failedSubmissions[0].error}`);
-    }
-  }
 
   // Now wait for confirmations
   console.log("\n" + "=".repeat(70));
