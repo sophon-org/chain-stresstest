@@ -6,7 +6,10 @@ import {
   formatEther,
   formatUnits,
   parseUnits,
+  encodeFunctionData,
+  type TransactionReceipt,
 } from "viem";
+import { sendTransactionSync } from "viem/actions";
 import { privateKeyToAccount } from "viem/accounts";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -82,7 +85,7 @@ if (!validTypes.includes(TX_TYPE)) {
   console.error("   - call     : Counter contract function call");
   console.error("");
   console.error("Options:");
-  console.error("   --fast    : Enable aggressive optimizations (lower polling, higher gas)");
+  console.error("   --fast    : Use eth_sendRawTransactionSync (blocks until included)");
   console.error("");
   console.error("Usage: bun run scripts/single-tx-latency.ts [type] [--fast]");
   console.error("");
@@ -100,36 +103,35 @@ const sophonTestnet = defineChain({
   },
 });
 
-// Polling interval optimized for 200ms block times
-// Fast mode: 25ms polling (aggressive, may hit rate limits)
-// Normal mode: 100ms polling (safe default)
-const POLLING_INTERVAL = FAST_MODE ? 25 : 100;
+// Polling interval optimized for 200ms block times (only used in normal mode)
+const POLLING_INTERVAL = 100;
 
-// Gas multiplier for priority (1.0 = normal, 1.5 = 50% higher for priority)
-const GAS_PRICE_MULTIPLIER = FAST_MODE ? 1.5 : 1.0;
+// RPC URL for direct requests
+const RPC_URL = "https://zksync-os-testnet-sophon.zksync.dev";
 
 const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
 const publicClient = createPublicClient({
   chain: sophonTestnet,
-  transport: http(undefined, {
-    retryCount: FAST_MODE ? 1 : 3,
-    retryDelay: FAST_MODE ? 100 : 500,
-    timeout: FAST_MODE ? 10_000 : 30_000,
+  transport: http(RPC_URL, {
+    retryCount: 3,
+    retryDelay: 500,
+    timeout: 60_000, // Longer timeout for sync calls
   }),
   pollingInterval: POLLING_INTERVAL,
   batch: {
-    multicall: true, // Batch multiple calls into one request
+    multicall: true,
   },
 });
 const walletClient = createWalletClient({
   account,
   chain: sophonTestnet,
-  transport: http(undefined, {
-    retryCount: FAST_MODE ? 1 : 3,
-    retryDelay: FAST_MODE ? 100 : 500,
-    timeout: FAST_MODE ? 10_000 : 30_000,
+  transport: http(RPC_URL, {
+    retryCount: 3,
+    retryDelay: 500,
+    timeout: 60_000,
   }),
 });
+
 
 // Load Counter contract artifact
 const counterArtifactPath = join(
@@ -217,46 +219,73 @@ async function measureTransferLatency(): Promise<LatencyResult> {
     }
   }
 
-  // Get preflight info in parallel for speed
-  const [blockNumber, baseGasPrice] = await Promise.all([
-    publicClient.getBlockNumber(),
-    publicClient.getGasPrice(),
-  ]);
-
-  // Apply gas multiplier for fast mode
-  const gasPrice = BigInt(Math.floor(Number(baseGasPrice) * GAS_PRICE_MULTIPLIER));
+  // Get preflight info
+  const blockNumber = await publicClient.getBlockNumber();
 
   console.log(`   Pre-flight block: #${blockNumber}`);
-  console.log(`   Gas price: ${gasPrice} wei${FAST_MODE ? " (boosted)" : ""}`);
+  console.log(`   Mode: ${FAST_MODE ? "sendTransactionSync (EIP-7966)" : "sendTransaction + polling"}`);
 
-  // === TIMING: Transaction Submission ===
-  const submitStart = performance.now();
+  let receipt: TransactionReceipt;
+  let txHash: `0x${string}`;
+  let submissionLatency: number;
+  let confirmationLatency: number;
+  let totalLatency: number;
 
-  const txHash = await walletClient.writeContract({
-    address: MOCK_USDC_ADDRESS,
-    abi: ERC20_ABI,
-    functionName: "transfer",
-    args: [account.address, transferAmount],
-    gasPrice: FAST_MODE ? gasPrice : undefined,
-  });
+  if (FAST_MODE) {
+    // Fast mode: Use sendTransactionSync (EIP-7966) which blocks until included
+    // Prepare the transaction data
+    const data = encodeFunctionData({
+      abi: ERC20_ABI,
+      functionName: "transfer",
+      args: [account.address, transferAmount],
+    });
 
-  const submitEnd = performance.now();
-  const submissionLatency = submitEnd - submitStart;
+    // === TIMING: Send + Confirm in one call ===
+    const submitStart = performance.now();
+    
+    // sendTransactionSync returns receipt directly - no polling needed!
+    receipt = await sendTransactionSync(walletClient, {
+      to: MOCK_USDC_ADDRESS,
+      data,
+    });
+    txHash = receipt.transactionHash;
+    
+    const submitEnd = performance.now();
+    totalLatency = submitEnd - submitStart;
+    submissionLatency = totalLatency; // In sync mode, submission includes confirmation
+    confirmationLatency = 0; // No separate confirmation step
 
-  console.log(`   TX Hash: ${txHash}`);
-  console.log(`   ⏱️  Submission Latency: ${submissionLatency.toFixed(2)}ms`);
+    console.log(`   TX Hash: ${txHash}`);
+    console.log(`   ⏱️  Sync Latency: ${totalLatency.toFixed(2)}ms (submit + confirm combined)`);
+  } else {
+    // Normal mode: Use async send + wait for receipt
+    const submitStart = performance.now();
 
-  // === TIMING: Transaction Confirmation ===
-  const confirmStart = performance.now();
+    txHash = await walletClient.writeContract({
+      address: MOCK_USDC_ADDRESS,
+      abi: ERC20_ABI,
+      functionName: "transfer",
+      args: [account.address, transferAmount],
+    });
 
-  const receipt = await publicClient.waitForTransactionReceipt({
-    hash: txHash,
-    timeout: 60_000,
-  });
+    const submitEnd = performance.now();
+    submissionLatency = submitEnd - submitStart;
 
-  const confirmEnd = performance.now();
-  const confirmationLatency = confirmEnd - confirmStart;
-  const totalLatency = confirmEnd - submitStart;
+    console.log(`   TX Hash: ${txHash}`);
+    console.log(`   ⏱️  Submission Latency: ${submissionLatency.toFixed(2)}ms`);
+
+    // === TIMING: Transaction Confirmation ===
+    const confirmStart = performance.now();
+
+    receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash,
+      timeout: 60_000,
+    });
+
+    const confirmEnd = performance.now();
+    confirmationLatency = confirmEnd - confirmStart;
+    totalLatency = confirmEnd - submitStart;
+  }
 
   const result: LatencyResult = {
     type: "ERC20",
@@ -279,45 +308,61 @@ async function measureDeployLatency(): Promise<LatencyResult> {
   console.log("📤 Testing: Counter Contract Deployment");
   console.log("-".repeat(70));
 
-  // Get preflight info in parallel for speed
-  const [blockNumber, baseGasPrice] = await Promise.all([
-    publicClient.getBlockNumber(),
-    publicClient.getGasPrice(),
-  ]);
-
-  const gasPrice = BigInt(Math.floor(Number(baseGasPrice) * GAS_PRICE_MULTIPLIER));
+  const blockNumber = await publicClient.getBlockNumber();
 
   console.log(`   Pre-flight block: #${blockNumber}`);
   console.log(`   Bytecode size: ${(counterArtifact.bytecode.length / 2 - 1).toLocaleString()} bytes`);
-  console.log(`   Gas price: ${gasPrice} wei${FAST_MODE ? " (boosted)" : ""}`);
+  console.log(`   Mode: ${FAST_MODE ? "sendTransactionSync (EIP-7966)" : "sendTransaction + polling"}`);
 
-  // === TIMING: Deployment Submission ===
-  const submitStart = performance.now();
+  let receipt: TransactionReceipt;
+  let txHash: `0x${string}`;
+  let submissionLatency: number;
+  let confirmationLatency: number;
+  let totalLatency: number;
 
-  const txHash = await walletClient.deployContract({
-    abi: counterArtifact.abi,
-    bytecode: counterArtifact.bytecode as `0x${string}`,
-    args: [],
-    gasPrice: FAST_MODE ? gasPrice : undefined,
-  });
+  if (FAST_MODE) {
+    // Fast mode: Use sendTransactionSync for deployment
+    const submitStart = performance.now();
 
-  const submitEnd = performance.now();
-  const submissionLatency = submitEnd - submitStart;
+    receipt = await sendTransactionSync(walletClient, {
+      data: counterArtifact.bytecode as `0x${string}`,
+    });
+    txHash = receipt.transactionHash;
 
-  console.log(`   TX Hash: ${txHash}`);
-  console.log(`   ⏱️  Submission Latency: ${submissionLatency.toFixed(2)}ms`);
+    const submitEnd = performance.now();
+    totalLatency = submitEnd - submitStart;
+    submissionLatency = totalLatency;
+    confirmationLatency = 0;
 
-  // === TIMING: Deployment Confirmation ===
-  const confirmStart = performance.now();
+    console.log(`   TX Hash: ${txHash}`);
+    console.log(`   ⏱️  Sync Latency: ${totalLatency.toFixed(2)}ms (submit + confirm combined)`);
+  } else {
+    // Normal mode: Use async deploy + wait for receipt
+    const submitStart = performance.now();
 
-  const receipt = await publicClient.waitForTransactionReceipt({
-    hash: txHash,
-    timeout: 60_000,
-  });
+    txHash = await walletClient.deployContract({
+      abi: counterArtifact.abi,
+      bytecode: counterArtifact.bytecode as `0x${string}`,
+      args: [],
+    });
 
-  const confirmEnd = performance.now();
-  const confirmationLatency = confirmEnd - confirmStart;
-  const totalLatency = confirmEnd - submitStart;
+    const submitEnd = performance.now();
+    submissionLatency = submitEnd - submitStart;
+
+    console.log(`   TX Hash: ${txHash}`);
+    console.log(`   ⏱️  Submission Latency: ${submissionLatency.toFixed(2)}ms`);
+
+    const confirmStart = performance.now();
+
+    receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash,
+      timeout: 60_000,
+    });
+
+    const confirmEnd = performance.now();
+    confirmationLatency = confirmEnd - confirmStart;
+    totalLatency = confirmEnd - submitStart;
+  }
 
   const result: LatencyResult = {
     type: "Deploy",
@@ -329,7 +374,7 @@ async function measureDeployLatency(): Promise<LatencyResult> {
     blocksWaited: Number(receipt.blockNumber - blockNumber),
     gasUsed: receipt.gasUsed,
     status: receipt.status,
-    contractAddress: receipt.contractAddress!,
+    contractAddress: receipt.contractAddress ?? undefined,
   };
 
   printLatencyBreakdown(result);
@@ -342,60 +387,95 @@ async function measureCallLatency(): Promise<LatencyResult> {
   console.log("📤 Testing: Counter Contract Function Call (inc)");
   console.log("-".repeat(70));
 
-  // First deploy a Counter contract (with gas boost if fast mode)
+  // First deploy a Counter contract
   console.log("   Deploying Counter contract...");
-  const baseGasPrice = await publicClient.getGasPrice();
-  const gasPrice = BigInt(Math.floor(Number(baseGasPrice) * GAS_PRICE_MULTIPLIER));
 
-  const deployHash = await walletClient.deployContract({
-    abi: counterArtifact.abi,
-    bytecode: counterArtifact.bytecode as `0x${string}`,
-    args: [],
-    gasPrice: FAST_MODE ? gasPrice : undefined,
-  });
+  let contractAddress: `0x${string}`;
 
-  const deployReceipt = await publicClient.waitForTransactionReceipt({
-    hash: deployHash,
-    timeout: 60_000,
-  });
+  if (FAST_MODE) {
+    // Deploy using sendTransactionSync
+    const deployReceipt = await sendTransactionSync(walletClient, {
+      data: counterArtifact.bytecode as `0x${string}`,
+    });
+    contractAddress = deployReceipt.contractAddress as `0x${string}`;
+  } else {
+    const deployHash = await walletClient.deployContract({
+      abi: counterArtifact.abi,
+      bytecode: counterArtifact.bytecode as `0x${string}`,
+      args: [],
+    });
+    const deployReceipt = await publicClient.waitForTransactionReceipt({
+      hash: deployHash,
+      timeout: 60_000,
+    });
+    contractAddress = deployReceipt.contractAddress as `0x${string}`;
+  }
 
-  const contractAddress = deployReceipt.contractAddress!;
   console.log(`   Contract deployed at: ${contractAddress}`);
 
-  // Get preflight block number (gas price already fetched above)
   const blockNumber = await publicClient.getBlockNumber();
 
   console.log(`   Pre-flight block: #${blockNumber}`);
-  console.log(`   Gas price: ${gasPrice} wei${FAST_MODE ? " (boosted)" : ""}`);
+  console.log(`   Mode: ${FAST_MODE ? "sendTransactionSync (EIP-7966)" : "sendTransaction + polling"}`);
 
-  // === TIMING: Function Call Submission ===
-  const submitStart = performance.now();
+  let receipt: TransactionReceipt;
+  let txHash: `0x${string}`;
+  let submissionLatency: number;
+  let confirmationLatency: number;
+  let totalLatency: number;
 
-  const txHash = await walletClient.writeContract({
-    address: contractAddress,
+  // Prepare the function call data
+  const data = encodeFunctionData({
     abi: counterArtifact.abi,
     functionName: "inc",
     args: [],
-    gasPrice: FAST_MODE ? gasPrice : undefined,
   });
 
-  const submitEnd = performance.now();
-  const submissionLatency = submitEnd - submitStart;
+  if (FAST_MODE) {
+    // Fast mode: Use sendTransactionSync
+    const submitStart = performance.now();
 
-  console.log(`   TX Hash: ${txHash}`);
-  console.log(`   ⏱️  Submission Latency: ${submissionLatency.toFixed(2)}ms`);
+    receipt = await sendTransactionSync(walletClient, {
+      to: contractAddress,
+      data,
+    });
+    txHash = receipt.transactionHash;
 
-  // === TIMING: Function Call Confirmation ===
-  const confirmStart = performance.now();
+    const submitEnd = performance.now();
+    totalLatency = submitEnd - submitStart;
+    submissionLatency = totalLatency;
+    confirmationLatency = 0;
 
-  const receipt = await publicClient.waitForTransactionReceipt({
-    hash: txHash,
-    timeout: 60_000,
-  });
+    console.log(`   TX Hash: ${txHash}`);
+    console.log(`   ⏱️  Sync Latency: ${totalLatency.toFixed(2)}ms (submit + confirm combined)`);
+  } else {
+    // Normal mode: Use async send + wait for receipt
+    const submitStart = performance.now();
 
-  const confirmEnd = performance.now();
-  const confirmationLatency = confirmEnd - confirmStart;
-  const totalLatency = confirmEnd - submitStart;
+    txHash = await walletClient.writeContract({
+      address: contractAddress,
+      abi: counterArtifact.abi,
+      functionName: "inc",
+      args: [],
+    });
+
+    const submitEnd = performance.now();
+    submissionLatency = submitEnd - submitStart;
+
+    console.log(`   TX Hash: ${txHash}`);
+    console.log(`   ⏱️  Submission Latency: ${submissionLatency.toFixed(2)}ms`);
+
+    const confirmStart = performance.now();
+
+    receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash,
+      timeout: 60_000,
+    });
+
+    const confirmEnd = performance.now();
+    confirmationLatency = confirmEnd - confirmStart;
+    totalLatency = confirmEnd - submitStart;
+  }
 
   // Verify state change
   const counterValue = await publicClient.readContract({
@@ -465,11 +545,10 @@ function printSummary(results: LatencyResult[]): void {
 async function main() {
   console.log(`\n📊 Configuration:`);
   console.log(`   Test Type: ${TX_TYPE}`);
-  console.log(`   Fast Mode: ${FAST_MODE ? "✅ ENABLED" : "❌ disabled (use --fast to enable)"}`);
+  console.log(`   Fast Mode: ${FAST_MODE ? "✅ ENABLED (sendTransactionSync / EIP-7966)" : "❌ disabled (use --fast to enable)"}`);
   console.log(`   Account: ${account.address}`);
-  console.log(`   Polling Interval: ${POLLING_INTERVAL}ms${FAST_MODE ? " (aggressive)" : ""}`);
-  if (FAST_MODE) {
-    console.log(`   Gas Price Boost: ${((GAS_PRICE_MULTIPLIER - 1) * 100).toFixed(0)}% higher`);
+  if (!FAST_MODE) {
+    console.log(`   Polling Interval: ${POLLING_INTERVAL}ms`);
   }
 
   // Check RPC availability
