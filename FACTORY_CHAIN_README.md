@@ -30,7 +30,7 @@ Transaction → Deploy Factory1 → Factory1.constructor()
    ```
 
 2. **Ensure you have testnet ETH** on the Sophon testnet at:
-   - RPC: https://zksync-os-testnet-sophon.zksync.dev
+   - RPC: https://rpc.testnet.os.sophon.com
 
 ## Running the Stress Test
 
@@ -146,7 +146,7 @@ The Sophon testnet is configured in `hardhat.config.ts`:
 sophon: {
   type: "http",
   chainType: "l2",
-  url: "https://zksync-os-testnet-sophon.zksync.dev",
+  url: "https://rpc.testnet.os.sophon.com",
   accounts: [configVariable("PRIVATE_KEY")],
 }
 ```

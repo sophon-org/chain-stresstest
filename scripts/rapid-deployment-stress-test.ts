@@ -47,7 +47,7 @@ const sophonTestnet = defineChain({
   name: "Sophon Testnet",
   nativeCurrency: { decimals: 18, name: "Sophon", symbol: "SOPH" },
   rpcUrls: {
-    default: { http: ["https://zksync-os-testnet-sophon.zksync.dev"] },
+    default: { http: ["https://rpc.testnet.os.sophon.com"] },
   },
 });
 

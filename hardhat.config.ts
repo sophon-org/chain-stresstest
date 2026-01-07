@@ -16,7 +16,7 @@ const sophonTestnet = defineChain({
   },
   rpcUrls: {
     default: {
-      http: ["https://zksync-os-testnet-sophon.zksync.dev"],
+      http: ["https://rpc.testnet.os.sophon.com"],
     },
   },
   blockExplorers: {
@@ -68,7 +68,7 @@ const config = {
     },
     sophonTestnet: {
       type: "http",
-      url: "https://zksync-os-testnet-sophon.zksync.dev",
+      url: "https://rpc.testnet.os.sophon.com",
       chainId: 531050204,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chain: sophonTestnet,

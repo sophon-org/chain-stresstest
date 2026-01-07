@@ -12,7 +12,6 @@ import {
 	type TransactionReceipt,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { sendTransactionSync } from "viem/actions";
 
 // Mock USDC on Sophon Testnet
 // https://explorer.testnet.os.sophon.com/address/0x633BC05314E882B0d83aEc3A55ddeF2aEC37363A
@@ -104,7 +103,7 @@ const sophonTestnet = defineChain({
 	name: "Sophon Testnet",
 	nativeCurrency: { decimals: 18, name: "Sophon", symbol: "SOPH" },
 	rpcUrls: {
-		default: { http: ["https://zksync-os-testnet-sophon.zksync.dev"] },
+		default: { http: ["https://rpc.testnet.os.sophon.com"] },
 	},
 });
 
@@ -112,7 +111,7 @@ const sophonTestnet = defineChain({
 const POLLING_INTERVAL = 100;
 
 // RPC URL for direct requests
-const RPC_URL = "https://zksync-os-testnet-sophon.zksync.dev";
+const RPC_URL = "https://rpc.testnet.os.sophon.com";
 
 const account = privateKeyToAccount(process.env.PRIVATE_KEY as `0x${string}`);
 const publicClient = createPublicClient({
@@ -143,6 +142,11 @@ const counterArtifact = JSON.parse(readFileSync(counterArtifactPath, "utf8"));
 interface LatencyResult {
 	type: string;
 	txHash: string;
+	/**
+	 * Time spent pre-filling tx fields (gas/fees/nonce) outside the timed send call.
+	 * Only populated in --fast mode.
+	 */
+	prefillLatency: number;
 	submissionLatency: number;
 	confirmationLatency: number;
 	totalLatency: number;
@@ -237,7 +241,7 @@ async function measureTransferLatency(): Promise<LatencyResult> {
 
 	console.log(`   Pre-flight block: #${blockNumber}`);
 	console.log(
-		`   Mode: ${FAST_MODE ? "sendTransactionSync (EIP-7966)" : "sendTransaction + polling"}`,
+		`   Mode: ${FAST_MODE ? "sendTransactionSync (eth_sendRawTransactionSync)" : "sendTransaction + polling"}`,
 	);
 
 	let receipt: TransactionReceipt;
@@ -245,23 +249,49 @@ async function measureTransferLatency(): Promise<LatencyResult> {
 	let submissionLatency: number;
 	let confirmationLatency: number;
 	let totalLatency: number;
+	let startBlockNumber = blockNumber;
+	let prefillLatency = 0;
 
 	if (FAST_MODE) {
-		// Fast mode: Use sendTransactionSync (EIP-7966) which blocks until included
-		// Prepare the transaction data
+		// Fast mode: Use sendTransactionSync which blocks until included.
+		// For Local Accounts, Viem uses `eth_sendRawTransactionSync`.
+		// Docs: https://viem.sh/docs/actions/wallet/sendTransactionSync
 		const data = encodeFunctionData({
 			abi: ERC20_ABI,
 			functionName: "transfer",
 			args: [account.address, transferAmount],
 		});
 
+		// Prefill tx fields OUTSIDE timed region to avoid measuring internal
+		// estimation/fee/nonce overhead inside sendTransactionSync.
+		const prefillStart = performance.now();
+		const [gas, gasPrice, nonce] = await Promise.all([
+			publicClient.estimateGas({
+				account: account.address,
+				to: MOCK_USDC_ADDRESS,
+				data,
+			}),
+			publicClient.getGasPrice(),
+			publicClient.getTransactionCount({ address: account.address }),
+		]);
+		const prefillEnd = performance.now();
+		prefillLatency = prefillEnd - prefillStart;
+		console.log(
+			`   ⏱️  Prefill (gas/fee/nonce): ${prefillLatency.toFixed(2)}ms`,
+		);
+
+		startBlockNumber = await publicClient.getBlockNumber();
+
 		// === TIMING: Send + Confirm in one call ===
 		const submitStart = performance.now();
 
-		// sendTransactionSync returns receipt directly - no polling needed!
-		receipt = await sendTransactionSync(walletClient, {
+		receipt = await walletClient.sendTransactionSync({
 			to: MOCK_USDC_ADDRESS,
 			data,
+			gas,
+			gasPrice,
+			nonce,
+			timeout: 20_000,
 		});
 		txHash = receipt.transactionHash;
 
@@ -307,11 +337,12 @@ async function measureTransferLatency(): Promise<LatencyResult> {
 	const result: LatencyResult = {
 		type: "ERC20",
 		txHash,
+		prefillLatency,
 		submissionLatency,
 		confirmationLatency,
 		totalLatency,
 		blockNumber: receipt.blockNumber,
-		blocksWaited: Number(receipt.blockNumber - blockNumber),
+		blocksWaited: Number(receipt.blockNumber - startBlockNumber),
 		gasUsed: receipt.gasUsed,
 		status: receipt.status,
 	};
@@ -332,7 +363,7 @@ async function measureDeployLatency(): Promise<LatencyResult> {
 		`   Bytecode size: ${(counterArtifact.bytecode.length / 2 - 1).toLocaleString()} bytes`,
 	);
 	console.log(
-		`   Mode: ${FAST_MODE ? "sendTransactionSync (EIP-7966)" : "sendTransaction + polling"}`,
+		`   Mode: ${FAST_MODE ? "sendTransactionSync (eth_sendRawTransactionSync)" : "sendTransaction + polling"}`,
 	);
 
 	let receipt: TransactionReceipt;
@@ -340,13 +371,40 @@ async function measureDeployLatency(): Promise<LatencyResult> {
 	let submissionLatency: number;
 	let confirmationLatency: number;
 	let totalLatency: number;
+	let startBlockNumber = blockNumber;
+	let prefillLatency = 0;
 
 	if (FAST_MODE) {
-		// Fast mode: Use sendTransactionSync for deployment
+		// Fast mode: Use sendTransactionSync for deployment (contract creation),
+		// and prefill tx params outside the timed region.
+		// Docs: https://viem.sh/docs/actions/wallet/sendTransactionSync
+		const bytecode = counterArtifact.bytecode as `0x${string}`;
+
+		const prefillStart = performance.now();
+		const [gas, gasPrice, nonce] = await Promise.all([
+			publicClient.estimateGas({
+				account: account.address,
+				data: bytecode,
+			}),
+			publicClient.getGasPrice(),
+			publicClient.getTransactionCount({ address: account.address }),
+		]);
+		const prefillEnd = performance.now();
+		prefillLatency = prefillEnd - prefillStart;
+		console.log(
+			`   ⏱️  Prefill (gas/fee/nonce): ${prefillLatency.toFixed(2)}ms`,
+		);
+
+		startBlockNumber = await publicClient.getBlockNumber();
+
 		const submitStart = performance.now();
 
-		receipt = await sendTransactionSync(walletClient, {
-			data: counterArtifact.bytecode as `0x${string}`,
+		receipt = await walletClient.sendTransactionSync({
+			data: bytecode,
+			gas,
+			gasPrice,
+			nonce,
+			timeout: 20_000,
 		});
 		txHash = receipt.transactionHash;
 
@@ -390,11 +448,12 @@ async function measureDeployLatency(): Promise<LatencyResult> {
 	const result: LatencyResult = {
 		type: "Deploy",
 		txHash,
+		prefillLatency,
 		submissionLatency,
 		confirmationLatency,
 		totalLatency,
 		blockNumber: receipt.blockNumber,
-		blocksWaited: Number(receipt.blockNumber - blockNumber),
+		blocksWaited: Number(receipt.blockNumber - startBlockNumber),
 		gasUsed: receipt.gasUsed,
 		status: receipt.status,
 		contractAddress: receipt.contractAddress ?? undefined,
@@ -416,9 +475,23 @@ async function measureCallLatency(): Promise<LatencyResult> {
 	let contractAddress: `0x${string}`;
 
 	if (FAST_MODE) {
-		// Deploy using sendTransactionSync
-		const deployReceipt = await sendTransactionSync(walletClient, {
-			data: counterArtifact.bytecode as `0x${string}`,
+		// Deploy using sendTransactionSync (prefill params outside timed region)
+		const bytecode = counterArtifact.bytecode as `0x${string}`;
+		const [gas, gasPrice, nonce] = await Promise.all([
+			publicClient.estimateGas({
+				account: account.address,
+				data: bytecode,
+			}),
+			publicClient.getGasPrice(),
+			publicClient.getTransactionCount({ address: account.address }),
+		]);
+
+		const deployReceipt = await walletClient.sendTransactionSync({
+			data: bytecode,
+			gas,
+			gasPrice,
+			nonce,
+			timeout: 20_000,
 		});
 		contractAddress = deployReceipt.contractAddress as `0x${string}`;
 	} else {
@@ -440,7 +513,7 @@ async function measureCallLatency(): Promise<LatencyResult> {
 
 	console.log(`   Pre-flight block: #${blockNumber}`);
 	console.log(
-		`   Mode: ${FAST_MODE ? "sendTransactionSync (EIP-7966)" : "sendTransaction + polling"}`,
+		`   Mode: ${FAST_MODE ? "sendTransactionSync (eth_sendRawTransactionSync)" : "sendTransaction + polling"}`,
 	);
 
 	let receipt: TransactionReceipt;
@@ -448,6 +521,8 @@ async function measureCallLatency(): Promise<LatencyResult> {
 	let submissionLatency: number;
 	let confirmationLatency: number;
 	let totalLatency: number;
+	let startBlockNumber = blockNumber;
+	let prefillLatency = 0;
 
 	// Prepare the function call data
 	const data = encodeFunctionData({
@@ -457,12 +532,34 @@ async function measureCallLatency(): Promise<LatencyResult> {
 	});
 
 	if (FAST_MODE) {
-		// Fast mode: Use sendTransactionSync
+		// Fast mode: Use sendTransactionSync (prefill fields outside timed region)
+		const prefillStart = performance.now();
+		const [gas, gasPrice, nonce] = await Promise.all([
+			publicClient.estimateGas({
+				account: account.address,
+				to: contractAddress,
+				data,
+			}),
+			publicClient.getGasPrice(),
+			publicClient.getTransactionCount({ address: account.address }),
+		]);
+		const prefillEnd = performance.now();
+		prefillLatency = prefillEnd - prefillStart;
+		console.log(
+			`   ⏱️  Prefill (gas/fee/nonce): ${prefillLatency.toFixed(2)}ms`,
+		);
+
+		startBlockNumber = await publicClient.getBlockNumber();
+
 		const submitStart = performance.now();
 
-		receipt = await sendTransactionSync(walletClient, {
+		receipt = await walletClient.sendTransactionSync({
 			to: contractAddress,
 			data,
+			gas,
+			gasPrice,
+			nonce,
+			timeout: 20_000,
 		});
 		txHash = receipt.transactionHash;
 
@@ -515,11 +612,12 @@ async function measureCallLatency(): Promise<LatencyResult> {
 	const result: LatencyResult = {
 		type: "Call",
 		txHash,
+		prefillLatency,
 		submissionLatency,
 		confirmationLatency,
 		totalLatency,
 		blockNumber: receipt.blockNumber,
-		blocksWaited: Number(receipt.blockNumber - blockNumber),
+		blocksWaited: Number(receipt.blockNumber - startBlockNumber),
 		gasUsed: receipt.gasUsed,
 		status: receipt.status,
 		contractAddress,
@@ -551,12 +649,17 @@ function printSummary(results: LatencyResult[]): void {
 	console.log("📊 LATENCY TEST SUMMARY");
 	console.log("=".repeat(70));
 
+	const avgPrefill =
+		results.reduce((sum, r) => sum + r.prefillLatency, 0) / results.length;
 	const avgSubmission =
 		results.reduce((sum, r) => sum + r.submissionLatency, 0) / results.length;
 	const avgConfirmation =
 		results.reduce((sum, r) => sum + r.confirmationLatency, 0) / results.length;
 	const avgTotal =
 		results.reduce((sum, r) => sum + r.totalLatency, 0) / results.length;
+	const avgTotalWithPrefill =
+		results.reduce((sum, r) => sum + (r.prefillLatency + r.totalLatency), 0) /
+		results.length;
 
 	console.log(`\n   Tests Run: ${results.length}`);
 	console.log(
@@ -564,20 +667,24 @@ function printSummary(results: LatencyResult[]): void {
 	);
 
 	console.log(`\n   ⏱️  AVERAGE LATENCIES:`);
+	console.log(`   ├─ Prefill:       ${avgPrefill.toFixed(2)}ms`);
 	console.log(`   ├─ Submission:    ${avgSubmission.toFixed(2)}ms`);
 	console.log(`   ├─ Confirmation:  ${avgConfirmation.toFixed(2)}ms`);
 	console.log(
 		`   └─ Total E2E:     ${avgTotal.toFixed(2)}ms (${(avgTotal / 1000).toFixed(3)}s)`,
 	);
+	console.log(
+		`   └─ Total+Prefill: ${avgTotalWithPrefill.toFixed(2)}ms (${(avgTotalWithPrefill / 1000).toFixed(3)}s)`,
+	);
 
 	console.log(`\n   📋 INDIVIDUAL RESULTS:`);
 	console.log(
-		`   ${"Type".padEnd(10)} ${"Submit".padStart(10)} ${"Confirm".padStart(10)} ${"Total".padStart(12)} ${"Blocks".padStart(8)}`,
+		`   ${"Type".padEnd(10)} ${"Prefill".padStart(10)} ${"Submit".padStart(10)} ${"Confirm".padStart(10)} ${"Total".padStart(12)} ${"Blocks".padStart(8)}`,
 	);
-	console.log(`   ${"-".repeat(52)}`);
+	console.log(`   ${"-".repeat(62)}`);
 	for (const r of results) {
 		console.log(
-			`   ${r.type.padEnd(10)} ${r.submissionLatency.toFixed(0).padStart(8)}ms ${r.confirmationLatency.toFixed(0).padStart(8)}ms ${r.totalLatency.toFixed(0).padStart(10)}ms ${r.blocksWaited.toString().padStart(8)}`,
+			`   ${r.type.padEnd(10)} ${r.prefillLatency.toFixed(0).padStart(8)}ms ${r.submissionLatency.toFixed(0).padStart(8)}ms ${r.confirmationLatency.toFixed(0).padStart(8)}ms ${r.totalLatency.toFixed(0).padStart(10)}ms ${r.blocksWaited.toString().padStart(8)}`,
 		);
 	}
 }
@@ -588,6 +695,11 @@ async function main() {
 	console.log(
 		`   Fast Mode: ${FAST_MODE ? "✅ ENABLED (sendTransactionSync / EIP-7966)" : "❌ disabled (use --fast to enable)"}`,
 	);
+	if (FAST_MODE) {
+		console.log(
+			"   Note: fast mode times only the sync sendTransactionSync call; gas/fee/nonce prefill is shown separately.",
+		);
+	}
 	console.log(`   Account: ${account.address}`);
 	if (!FAST_MODE) {
 		console.log(`   Polling Interval: ${POLLING_INTERVAL}ms`);

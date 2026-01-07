@@ -24,7 +24,7 @@ const sophonTestnet = defineChain({
   },
   rpcUrls: {
     default: {
-      http: ["https://zksync-os-testnet-sophon.zksync.dev"],
+      http: ["https://rpc.testnet.os.sophon.com"],
     },
   },
   blockExplorers: {
